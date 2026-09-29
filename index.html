@@ -190,6 +190,23 @@
     </form>
   </section>
 
+  <!-- Autorizar el celular (una sola vez por celular) -->
+  <section id="pantalla-autorizar" hidden>
+    <header>
+      <h1>Celular no autorizado</h1>
+      <button class="secundario chico" id="salir-autorizar">Salir</button>
+    </header>
+    <form id="form-autorizar" class="tarjeta">
+      <p>Los cobros solo se pueden cargar desde los celulares de la empresa.
+         Para autorizar este, escribí el código que da el programa de la
+         oficina (en <strong>Clientes → Repartidores → Celulares autorizados</strong>).</p>
+      <label for="codigo">Código</label>
+      <input id="codigo" inputmode="numeric" autocomplete="one-time-code" placeholder="000-000" required>
+      <div id="aviso-autorizar" class="aviso error" hidden></div>
+      <p><button class="principal" id="boton-autorizar">Autorizar este celular</button></p>
+    </form>
+  </section>
+
   <!-- Cargar cobros -->
   <section id="pantalla-cobros" hidden>
     <header>
@@ -312,7 +329,21 @@ async function arrancar() {
 
 function mostrar(pantalla) {
   $("pantalla-entrar").hidden = pantalla !== "entrar";
+  $("pantalla-autorizar").hidden = pantalla !== "autorizar";
   $("pantalla-cobros").hidden = pantalla !== "cobros";
+}
+
+// La llave de este celular. Queda guardada en el navegador: si se borran
+// sus datos, hay que volver a autorizarlo con un código nuevo.
+const LLAVE = "celular_llave";
+function llaveGuardada() {
+  try { return localStorage.getItem(LLAVE); } catch { return null; }
+}
+function guardarLlave(llave) {
+  try {
+    if (llave) localStorage.setItem(LLAVE, llave);
+    else localStorage.removeItem(LLAVE);
+  } catch { /* sin almacenamiento: habrá que autorizar cada vez */ }
 }
 
 $("form-entrar").addEventListener("submit", async (e) => {
@@ -354,17 +385,68 @@ async function entrarConSesion() {
     return;
   }
   yo = ficha;
-  $("quien").textContent = yo.nombre;
+  await revisarCelular();
+}
+
+// Sin un celular autorizado no se muestra el formulario de cobros.
+async function revisarCelular() {
+  const llave = llaveGuardada();
+  let nombreCelular = null;
+  if (llave) {
+    const { data, error } = await sb.rpc("verificar_celular", { p_llave: llave });
+    if (error) {
+      mostrar("entrar");
+      const aviso = $("aviso-entrar");
+      aviso.textContent = "No se pudo revisar el celular. Revisá la señal y probá de nuevo.";
+      aviso.hidden = false;
+      return;
+    }
+    nombreCelular = data;
+  }
+  if (!nombreCelular) {
+    guardarLlave(null);
+    $("codigo").value = "";
+    $("aviso-autorizar").hidden = true;
+    mostrar("autorizar");
+    return;
+  }
+  $("quien").textContent = `${yo.nombre} · ${nombreCelular}`;
   mostrar("cobros");
   await Promise.all([cargarClientes(), cargarCobrosDeHoy()]);
 }
 
-$("salir").addEventListener("click", async () => {
+$("form-autorizar").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const boton = $("boton-autorizar");
+  const aviso = $("aviso-autorizar");
+  aviso.hidden = true;
+  boton.disabled = true;
+  boton.textContent = "Autorizando…";
+  const { data, error } = await sb.rpc("activar_celular", { p_codigo: $("codigo").value });
+  boton.disabled = false;
+  boton.textContent = "Autorizar este celular";
+  if (error || !data) {
+    const texto = String(error && error.message);
+    aviso.textContent = texto.includes("demasiados_intentos")
+      ? "Demasiados códigos equivocados. Esperá una hora y probá de nuevo."
+      : error
+        ? "No se pudo autorizar. Revisá la señal y probá de nuevo."
+        : "Ese código no sirve. Fijate que esté bien escrito y que no haya vencido.";
+    aviso.hidden = false;
+    return;
+  }
+  guardarLlave(data);
+  await revisarCelular();
+});
+
+async function salir() {
   if (!confirm("¿Salir? Para volver a entrar vas a necesitar tu usuario y contraseña.")) return;
   await sb.auth.signOut();
   yo = null;
   mostrar("entrar");
-});
+}
+$("salir").addEventListener("click", salir);
+$("salir-autorizar").addEventListener("click", salir);
 
 // ---------------------------------------------------------------- clientes
 
@@ -536,14 +618,25 @@ async function guardarCobro() {
       if (error && !String(error.message).toLowerCase().includes("exists")) throw error;
     }
     const m = montos();
-    const { error } = await sb.from("cobros").insert({
-      id: idDelCobro,
-      cliente_id: clienteElegido.id,
-      ...m,
-      observaciones: $("observaciones").value.trim(),
-      foto: rutaFoto,
+    // Si el mismo cobro ya había llegado, cargar_cobro no hace nada.
+    const { error } = await sb.rpc("cargar_cobro", {
+      p_llave: llaveGuardada(),
+      p_id: idDelCobro,
+      p_cliente: clienteElegido.id,
+      p_efectivo: m.efectivo,
+      p_transferencia: m.transferencia,
+      p_cheque: m.cheque,
+      p_observaciones: $("observaciones").value.trim(),
+      p_foto: rutaFoto,
     });
-    if (error && error.code !== "23505") throw error;   // 23505: ya estaba
+    if (error && String(error.message).includes("celular_no_autorizado")) {
+      await revisarCelular();
+      $("aviso-autorizar").textContent =
+        "Este celular dejó de estar autorizado. El último cobro NO se guardó.";
+      $("aviso-autorizar").hidden = false;
+      return;
+    }
+    if (error) throw error;
 
     avisar(`Cobro guardado: ${clienteElegido.nombre}, ${plata(m.efectivo + m.transferencia + m.cheque)}.`, "ok");
     limpiar();
