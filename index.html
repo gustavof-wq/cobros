@@ -1,0 +1,624 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Cobros</title>
+<meta name="theme-color" content="#b3541e">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icono-192.png">
+<link rel="apple-touch-icon" href="icono-180.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Cobros">
+<!--
+  Página de cobros para los repartidores.
+
+  Cada repartidor entra con su usuario y carga lo que cobró. El cobro queda
+  en Supabase y el programa de la compu lo trae solo y lo carga en la cuenta
+  del cliente. Acá no se ve ningún saldo ni precio: solo la lista de
+  clientes y los cobros propios del día.
+
+  La clave de abajo es la «anon / public» de Supabase: está hecha para ir en
+  una página pública. Lo que protege los datos son los permisos de la base
+  (ver esquema_supabase.sql), no esta clave.
+-->
+<script>
+  const SUPABASE_URL = "https://npmqowynziokvqratdfg.supabase.co";
+  const SUPABASE_CLAVE_PUBLICA = "sb_publishable_qbI81ej6ko1e41Bdj1nYug__SgpyID9";
+  // El mismo dominio que usa la compu (nube.py) para armar el correo de
+  // cada repartidor a partir de su usuario.
+  const DOMINIO_USUARIOS = "repartidores.invalid";
+</script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+  :root {
+    --fondo: #f6f4f1;
+    --tarjeta: #ffffff;
+    --texto: #1d1b19;
+    --suave: #6b655e;
+    --borde: #ddd6ce;
+    --marca: #b3541e;
+    --marca-texto: #ffffff;
+    --ok: #2e7d32;
+    --error: #c62828;
+    --error-fondo: #fdecea;
+    --ok-fondo: #e8f5e9;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --fondo: #171513;
+      --tarjeta: #23201d;
+      --texto: #f2eee9;
+      --suave: #a79f96;
+      --borde: #3a3531;
+      --marca: #e07a3f;
+      --marca-texto: #1d1b19;
+      --ok: #7cc47f;
+      --error: #ff8a80;
+      --error-fondo: #3b1f1c;
+      --ok-fondo: #1d3320;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body {
+    background: var(--fondo);
+    color: var(--texto);
+    font: 17px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    padding: env(safe-area-inset-top) 16px calc(24px + env(safe-area-inset-bottom));
+  }
+  main { max-width: 520px; margin: 0 auto; }
+  [hidden] { display: none !important; }
+
+  header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 16px 0 8px;
+  }
+  header h1 { font-size: 22px; margin: 0; }
+  header .quien { color: var(--suave); font-size: 15px; }
+
+  .tarjeta {
+    background: var(--tarjeta);
+    border: 1px solid var(--borde);
+    border-radius: 14px;
+    padding: 16px;
+    margin: 12px 0;
+  }
+  h2 { font-size: 18px; margin: 0 0 12px; }
+
+  label { display: block; font-weight: 600; margin: 14px 0 6px; }
+  label:first-child { margin-top: 0; }
+  input, textarea {
+    width: 100%;
+    font: inherit;
+    font-size: 18px;               /* 16 o más: el iPhone no hace zoom */
+    color: var(--texto);
+    background: var(--fondo);
+    border: 1px solid var(--borde);
+    border-radius: 10px;
+    padding: 12px 14px;
+  }
+  input:focus, textarea:focus { outline: 2px solid var(--marca); outline-offset: 1px; }
+  textarea { min-height: 70px; resize: vertical; }
+
+  button {
+    font: inherit; font-weight: 600;
+    border: 0; border-radius: 12px;
+    padding: 14px 18px;
+    cursor: pointer;
+  }
+  .principal {
+    width: 100%;
+    background: var(--marca); color: var(--marca-texto);
+    font-size: 19px; padding: 16px;
+  }
+  .principal:disabled { opacity: .55; }
+  .secundario {
+    background: transparent; color: var(--marca);
+    border: 1px solid var(--borde);
+  }
+  .chico { padding: 8px 12px; font-size: 15px; }
+
+  .resultados { list-style: none; margin: 6px 0 0; padding: 0; }
+  .resultados button {
+    width: 100%; text-align: left;
+    background: var(--fondo); color: var(--texto);
+    border: 1px solid var(--borde);
+    margin-bottom: 6px; font-weight: 500;
+  }
+  .codigo { color: var(--suave); font-size: 14px; margin-left: 6px; }
+
+  .elegido {
+    display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    background: var(--ok-fondo);
+    border-radius: 10px; padding: 12px 14px;
+    font-weight: 600;
+  }
+
+  .montos { display: grid; grid-template-columns: 1fr; gap: 0; }
+  .total {
+    display: flex; justify-content: space-between;
+    font-size: 20px; font-weight: 700;
+    margin: 16px 0 12px;
+  }
+
+  .foto { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .foto img { max-width: 110px; max-height: 110px; border-radius: 8px; border: 1px solid var(--borde); }
+  #archivo { display: none; }
+
+  .aviso {
+    border-radius: 10px; padding: 12px 14px; margin: 12px 0;
+    font-weight: 600;
+  }
+  .aviso.error { background: var(--error-fondo); color: var(--error); }
+  .aviso.ok { background: var(--ok-fondo); color: var(--ok); }
+
+  .cobro {
+    display: flex; justify-content: space-between; gap: 12px;
+    padding: 10px 0; border-bottom: 1px solid var(--borde);
+  }
+  .cobro:last-child { border-bottom: 0; }
+  .cobro .detalle { color: var(--suave); font-size: 14px; }
+  .cobro .monto { font-weight: 700; white-space: nowrap; }
+  .resumen { display: grid; grid-template-columns: 1fr auto; gap: 4px 12px; margin-bottom: 8px; }
+  .resumen .fuerte { font-weight: 700; }
+  .vacio { color: var(--suave); }
+
+  dialog {
+    border: 0; border-radius: 16px; padding: 20px;
+    background: var(--tarjeta); color: var(--texto);
+    width: min(92vw, 420px);
+  }
+  dialog::backdrop { background: rgba(0,0,0,.45); }
+  dialog .botones { display: flex; gap: 10px; margin-top: 18px; }
+  dialog .botones button { flex: 1; }
+</style>
+</head>
+<body>
+<main>
+
+  <!-- Entrar -->
+  <section id="pantalla-entrar" hidden>
+    <header><h1>Cobros</h1></header>
+    <form id="form-entrar" class="tarjeta" autocomplete="on">
+      <label for="usuario">Usuario</label>
+      <input id="usuario" autocapitalize="none" autocorrect="off" autocomplete="username" required>
+      <label for="contrasena">Contraseña</label>
+      <input id="contrasena" type="password" autocomplete="current-password" required>
+      <div id="aviso-entrar" class="aviso error" hidden></div>
+      <p><button class="principal" id="boton-entrar">Entrar</button></p>
+    </form>
+  </section>
+
+  <!-- Cargar cobros -->
+  <section id="pantalla-cobros" hidden>
+    <header>
+      <div>
+        <h1>Cargar cobro</h1>
+        <div class="quien" id="quien"></div>
+      </div>
+      <button class="secundario chico" id="salir">Salir</button>
+    </header>
+
+    <div id="aviso" class="aviso" hidden></div>
+
+    <form id="form-cobro" class="tarjeta" novalidate>
+      <label for="buscar">Cliente</label>
+      <div id="cliente-elegido" class="elegido" hidden>
+        <span id="cliente-nombre"></span>
+        <button type="button" class="secundario chico" id="cambiar-cliente">Cambiar</button>
+      </div>
+      <div id="elegir-cliente">
+        <input id="buscar" placeholder="Escribí el nombre o el código" autocomplete="off">
+        <ul class="resultados" id="resultados"></ul>
+      </div>
+
+      <div class="montos">
+        <label for="efectivo">Efectivo</label>
+        <input id="efectivo" inputmode="decimal" placeholder="$ 0" autocomplete="off">
+        <label for="transferencia">Transferencia</label>
+        <input id="transferencia" inputmode="decimal" placeholder="$ 0" autocomplete="off">
+        <label for="cheque">Cheque</label>
+        <input id="cheque" inputmode="decimal" placeholder="$ 0" autocomplete="off">
+      </div>
+
+      <label>Comprobante</label>
+      <div class="foto">
+        <button type="button" class="secundario" id="sacar-foto">📷 Sacar foto</button>
+        <img id="vista-foto" alt="Foto del comprobante" hidden>
+        <button type="button" class="secundario chico" id="quitar-foto" hidden>Quitar</button>
+        <input type="file" id="archivo" accept="image/*" capture="environment">
+      </div>
+
+      <label for="observaciones">Observaciones (opcional)</label>
+      <textarea id="observaciones"></textarea>
+
+      <div class="total"><span>Total</span><span id="total">$ 0</span></div>
+      <button class="principal" id="guardar">Guardar cobro</button>
+    </form>
+
+    <section class="tarjeta">
+      <h2>Mis cobros de hoy</h2>
+      <div class="resumen" id="resumen"></div>
+      <div id="lista-hoy"></div>
+    </section>
+  </section>
+
+  <dialog id="confirmar">
+    <h2>¿Guardar este cobro?</h2>
+    <div id="confirmar-detalle"></div>
+    <div class="botones">
+      <button type="button" class="secundario" id="confirmar-no">Volver</button>
+      <button type="button" class="principal" id="confirmar-si">Guardar</button>
+    </div>
+  </dialog>
+</main>
+
+<script>
+const sb = supabase.createClient(SUPABASE_URL, SUPABASE_CLAVE_PUBLICA);
+const $ = (id) => document.getElementById(id);
+
+let yo = null;            // la ficha del repartidor
+let clientes = [];        // [{id, codigo, nombre}]
+let clienteElegido = null;
+let foto = null;          // Blob ya achicado
+let idDelCobro = null;    // se mantiene si falla, para que reintentar no duplique
+
+// ---------------------------------------------------------------- utilidades
+
+const formato = new Intl.NumberFormat("es-AR", { maximumFractionDigits: 2 });
+const plata = (n) => "$ " + formato.format(n || 0);
+
+// Acepta "50000", "50.000", "50.000,50" y "50000.5".
+function leerMonto(texto) {
+  let t = (texto || "").replace(/[^\d.,]/g, "");
+  if (!t) return 0;
+  if (t.includes(",")) t = t.replace(/\./g, "").replace(",", ".");
+  else if (/\.\d{3}(\.|$)/.test(t)) t = t.replace(/\./g, "");
+  const n = Number(t);
+  return Number.isFinite(n) && n > 0 ? Math.round(n * 100) / 100 : 0;
+}
+
+function hoyEnArgentina() {
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "America/Argentina/Buenos_Aires" })
+    .format(new Date());
+}
+
+function avisar(texto, tipo) {
+  const aviso = $("aviso");
+  aviso.textContent = texto;
+  aviso.className = "aviso " + tipo;
+  aviso.hidden = false;
+  aviso.scrollIntoView({ behavior: "smooth", block: "center" });
+  if (tipo === "ok") setTimeout(() => { aviso.hidden = true; }, 5000);
+}
+
+function explicarError(error) {
+  const texto = String(error && (error.message || error)).toLowerCase();
+  if (!navigator.onLine || texto.includes("fetch") || texto.includes("network"))
+    return "No hay señal. El cobro NO se guardó: probá de nuevo en un rato.";
+  if (texto.includes("row-level security") || texto.includes("jwt"))
+    return "Tu usuario no tiene permiso para cargar cobros. Avisale a la oficina.";
+  return "No se pudo guardar el cobro: " + (error.message || error);
+}
+
+// ---------------------------------------------------------------- entrar
+
+async function arrancar() {
+  const { data } = await sb.auth.getSession();
+  if (data.session) await entrarConSesion();
+  else mostrar("entrar");
+}
+
+function mostrar(pantalla) {
+  $("pantalla-entrar").hidden = pantalla !== "entrar";
+  $("pantalla-cobros").hidden = pantalla !== "cobros";
+}
+
+$("form-entrar").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const boton = $("boton-entrar");
+  const aviso = $("aviso-entrar");
+  aviso.hidden = true;
+  boton.disabled = true;
+  boton.textContent = "Entrando…";
+  const usuario = $("usuario").value.trim().toLowerCase();
+  const { error } = await sb.auth.signInWithPassword({
+    email: `${usuario}@${DOMINIO_USUARIOS}`,
+    password: $("contrasena").value,
+  });
+  boton.disabled = false;
+  boton.textContent = "Entrar";
+  if (error) {
+    aviso.textContent = !navigator.onLine
+      ? "No hay señal. Probá de nuevo en un rato."
+      : "Usuario o contraseña incorrectos.";
+    aviso.hidden = false;
+    return;
+  }
+  $("contrasena").value = "";
+  await entrarConSesion();
+});
+
+async function entrarConSesion() {
+  const { data: fichas, error } = await sb.from("repartidores").select("*");
+  const ficha = fichas && fichas[0];
+  if (error || !ficha || !ficha.activo) {
+    await sb.auth.signOut();
+    mostrar("entrar");
+    const aviso = $("aviso-entrar");
+    aviso.textContent = error
+      ? "No se pudo entrar. Revisá la señal y probá de nuevo."
+      : "Este usuario no está habilitado para cargar cobros.";
+    aviso.hidden = false;
+    return;
+  }
+  yo = ficha;
+  $("quien").textContent = yo.nombre;
+  mostrar("cobros");
+  await Promise.all([cargarClientes(), cargarCobrosDeHoy()]);
+}
+
+$("salir").addEventListener("click", async () => {
+  if (!confirm("¿Salir? Para volver a entrar vas a necesitar tu usuario y contraseña.")) return;
+  await sb.auth.signOut();
+  yo = null;
+  mostrar("entrar");
+});
+
+// ---------------------------------------------------------------- clientes
+
+async function cargarClientes() {
+  const { data, error } = await sb.from("clientes")
+    .select("id,codigo,nombre").eq("activo", true).order("nombre");
+  if (error) { avisar("No se pudo traer la lista de clientes. Revisá la señal.", "error"); return; }
+  clientes = data;
+}
+
+function sinAcentos(t) {
+  return t.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
+}
+
+$("buscar").addEventListener("input", () => {
+  const busqueda = sinAcentos($("buscar").value.trim());
+  const lista = $("resultados");
+  lista.innerHTML = "";
+  if (!busqueda) return;
+  const encontrados = clientes.filter((c) =>
+    sinAcentos(c.nombre).includes(busqueda) || sinAcentos(c.codigo || "") === busqueda
+  ).slice(0, 8);
+  if (!encontrados.length) {
+    lista.innerHTML = '<li class="vacio">No hay ningún cliente con ese nombre.</li>';
+    return;
+  }
+  for (const c of encontrados) {
+    const li = document.createElement("li");
+    const b = document.createElement("button");
+    b.type = "button";
+    b.textContent = c.nombre;
+    if (c.codigo) {
+      const cod = document.createElement("span");
+      cod.className = "codigo";
+      cod.textContent = c.codigo;
+      b.append(cod);
+    }
+    b.addEventListener("click", () => elegirCliente(c));
+    li.append(b);
+    lista.append(li);
+  }
+});
+
+function elegirCliente(c) {
+  clienteElegido = c;
+  $("cliente-nombre").textContent = c.nombre;
+  $("cliente-elegido").hidden = false;
+  $("elegir-cliente").hidden = true;
+  $("buscar").value = "";
+  $("resultados").innerHTML = "";
+}
+
+$("cambiar-cliente").addEventListener("click", () => {
+  clienteElegido = null;
+  $("cliente-elegido").hidden = true;
+  $("elegir-cliente").hidden = false;
+  $("buscar").focus();
+});
+
+// ---------------------------------------------------------------- montos
+
+function montos() {
+  return {
+    efectivo: leerMonto($("efectivo").value),
+    transferencia: leerMonto($("transferencia").value),
+    cheque: leerMonto($("cheque").value),
+  };
+}
+for (const id of ["efectivo", "transferencia", "cheque"]) {
+  $(id).addEventListener("input", () => {
+    const m = montos();
+    $("total").textContent = plata(m.efectivo + m.transferencia + m.cheque);
+  });
+}
+
+// ---------------------------------------------------------------- foto
+
+$("sacar-foto").addEventListener("click", () => $("archivo").click());
+
+$("archivo").addEventListener("change", async () => {
+  const archivo = $("archivo").files[0];
+  if (!archivo) return;
+  try {
+    foto = await achicar(archivo);
+  } catch {
+    foto = archivo;   // si no se pudo achicar, va la original
+  }
+  $("vista-foto").src = URL.createObjectURL(foto);
+  $("vista-foto").hidden = false;
+  $("quitar-foto").hidden = false;
+  $("sacar-foto").textContent = "📷 Otra foto";
+});
+
+$("quitar-foto").addEventListener("click", quitarFoto);
+
+function quitarFoto() {
+  foto = null;
+  $("archivo").value = "";
+  $("vista-foto").hidden = true;
+  $("quitar-foto").hidden = true;
+  $("sacar-foto").textContent = "📷 Sacar foto";
+}
+
+// Una foto de celular pesa 3 a 5 MB; achicada se lee igual y sube en un
+// segundo aunque haya poca señal.
+async function achicar(archivo, lado = 1600) {
+  const imagen = await createImageBitmap(archivo);
+  const escala = Math.min(1, lado / Math.max(imagen.width, imagen.height));
+  const lienzo = document.createElement("canvas");
+  lienzo.width = Math.round(imagen.width * escala);
+  lienzo.height = Math.round(imagen.height * escala);
+  lienzo.getContext("2d").drawImage(imagen, 0, 0, lienzo.width, lienzo.height);
+  return await new Promise((ok, mal) =>
+    lienzo.toBlob((b) => (b ? ok(b) : mal()), "image/jpeg", 0.8)
+  );
+}
+
+// ---------------------------------------------------------------- guardar
+
+$("form-cobro").addEventListener("submit", (e) => {
+  e.preventDefault();
+  $("aviso").hidden = true;
+  const m = montos();
+  const total = m.efectivo + m.transferencia + m.cheque;
+  if (!clienteElegido) return avisar("Elegí el cliente.", "error");
+  if (!total) return avisar("Poné cuánto cobraste.", "error");
+
+  const partes = [];
+  if (m.efectivo) partes.push(`Efectivo: ${plata(m.efectivo)}`);
+  if (m.transferencia) partes.push(`Transferencia: ${plata(m.transferencia)}`);
+  if (m.cheque) partes.push(`Cheque: ${plata(m.cheque)}`);
+  const detalle = $("confirmar-detalle");
+  detalle.innerHTML = "";
+  const nombre = document.createElement("p");
+  nombre.innerHTML = "<strong></strong>";
+  nombre.firstChild.textContent = clienteElegido.nombre;
+  detalle.append(nombre);
+  for (const p of partes) {
+    const linea = document.createElement("div");
+    linea.textContent = p;
+    detalle.append(linea);
+  }
+  const t = document.createElement("p");
+  t.innerHTML = "<strong></strong>";
+  t.firstChild.textContent = "Total: " + plata(total) + (foto ? " · con foto" : "");
+  detalle.append(t);
+  $("confirmar").showModal();
+});
+
+$("confirmar-no").addEventListener("click", () => $("confirmar").close());
+$("confirmar-si").addEventListener("click", async () => {
+  $("confirmar").close();
+  await guardarCobro();
+});
+
+async function guardarCobro() {
+  const boton = $("guardar");
+  boton.disabled = true;
+  boton.textContent = "Guardando…";
+  // El mismo número en cada reintento: si el primer intento llegó pero se
+  // cortó la señal antes de la respuesta, el segundo no lo duplica.
+  idDelCobro = idDelCobro || crypto.randomUUID();
+  try {
+    let rutaFoto = null;
+    if (foto) {
+      rutaFoto = `${yo.id}/${idDelCobro}.jpg`;
+      const { error } = await sb.storage.from("comprobantes")
+        .upload(rutaFoto, foto, { contentType: "image/jpeg", upsert: false });
+      if (error && !String(error.message).toLowerCase().includes("exists")) throw error;
+    }
+    const m = montos();
+    const { error } = await sb.from("cobros").insert({
+      id: idDelCobro,
+      cliente_id: clienteElegido.id,
+      ...m,
+      observaciones: $("observaciones").value.trim(),
+      foto: rutaFoto,
+    });
+    if (error && error.code !== "23505") throw error;   // 23505: ya estaba
+
+    avisar(`Cobro guardado: ${clienteElegido.nombre}, ${plata(m.efectivo + m.transferencia + m.cheque)}.`, "ok");
+    limpiar();
+    cargarCobrosDeHoy();
+  } catch (error) {
+    avisar(explicarError(error), "error");
+  } finally {
+    boton.disabled = false;
+    boton.textContent = "Guardar cobro";
+  }
+}
+
+function limpiar() {
+  idDelCobro = null;
+  clienteElegido = null;
+  $("cliente-elegido").hidden = true;
+  $("elegir-cliente").hidden = false;
+  for (const id of ["efectivo", "transferencia", "cheque", "observaciones"]) $(id).value = "";
+  $("total").textContent = plata(0);
+  quitarFoto();
+}
+
+// ---------------------------------------------------------------- lo de hoy
+
+async function cargarCobrosDeHoy() {
+  const { data, error } = await sb.from("cobros")
+    .select("id,creado_en,cliente_id,efectivo,transferencia,cheque,foto")
+    .eq("fecha", hoyEnArgentina())
+    .order("creado_en", { ascending: false });
+  const lista = $("lista-hoy");
+  const resumen = $("resumen");
+  lista.innerHTML = "";
+  resumen.innerHTML = "";
+  if (error) { lista.innerHTML = '<p class="vacio">No se pudo traer la lista.</p>'; return; }
+  if (!data.length) { lista.innerHTML = '<p class="vacio">Todavía no cargaste cobros hoy.</p>'; return; }
+
+  const suma = { efectivo: 0, transferencia: 0, cheque: 0 };
+  for (const c of data) {
+    for (const k in suma) suma[k] += Number(c[k]) || 0;
+    const cliente = clientes.find((x) => x.id === c.cliente_id);
+    const fila = document.createElement("div");
+    fila.className = "cobro";
+    const izq = document.createElement("div");
+    const nombre = document.createElement("div");
+    nombre.textContent = cliente ? cliente.nombre : "Cliente";
+    const detalle = document.createElement("div");
+    detalle.className = "detalle";
+    const hora = new Date(c.creado_en).toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit" });
+    const formas = ["efectivo", "transferencia", "cheque"].filter((k) => Number(c[k]))
+      .map((k) => k[0].toUpperCase() + k.slice(1)).join(" + ");
+    detalle.textContent = `${hora} · ${formas}${c.foto ? " · 📷" : ""}`;
+    izq.append(nombre, detalle);
+    const monto = document.createElement("div");
+    monto.className = "monto";
+    monto.textContent = plata(Number(c.efectivo) + Number(c.transferencia) + Number(c.cheque));
+    fila.append(izq, monto);
+    lista.append(fila);
+  }
+  const lineas = [
+    ["Efectivo a rendir", suma.efectivo, true],
+    ["Transferencias", suma.transferencia, false],
+    ["Cheques", suma.cheque, false],
+  ];
+  for (const [texto, valor, fuerte] of lineas) {
+    if (!valor && !fuerte) continue;
+    const a = document.createElement("span");
+    const b = document.createElement("span");
+    a.textContent = texto;
+    b.textContent = plata(valor);
+    if (fuerte) { a.className = "fuerte"; b.className = "fuerte"; }
+    resumen.append(a, b);
+  }
+}
+
+arrancar();
+</script>
+</body>
+</html>
