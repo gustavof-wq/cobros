@@ -319,12 +319,72 @@ function explicarError(error) {
   return "No se pudo guardar el cobro: " + (error.message || error);
 }
 
+// ------------------------------------------------------ cierre automático
+// La sesión no queda abierta para siempre: si el celular se deja quieto un
+// rato, o si cambió el día, hay que volver a poner la contraseña. La llave
+// del celular NO se borra: el teléfono sigue autorizado, así que alcanza con
+// la contraseña y no hay que pedir un código nuevo a la oficina.
+
+const MINUTOS_SIN_USAR = 60;
+const ACTIVIDAD = "ultima_actividad";
+let ultimoRegistro = 0;
+
+function marcarActividad() {
+  // Se anota como mucho una vez por minuto: toca el disco del teléfono.
+  if (Date.now() - ultimoRegistro < 60000) return;
+  ultimoRegistro = Date.now();
+  try {
+    localStorage.setItem(ACTIVIDAD, `${Date.now()}|${hoyEnArgentina()}`);
+  } catch { /* sin almacenamiento: la sesión se cierra al cerrar la página */ }
+}
+
+// Devuelve por qué hay que cerrar la sesión, o "" si sigue valiendo.
+function motivoDeCierre() {
+  let guardado = "";
+  try { guardado = localStorage.getItem(ACTIVIDAD) || ""; } catch { return ""; }
+  if (!guardado) return "";
+  const [cuando, dia] = guardado.split("|");
+  if (dia && dia !== hoyEnArgentina()) return "dia";
+  if (Date.now() - Number(cuando) > MINUTOS_SIN_USAR * 60000) return "inactividad";
+  return "";
+}
+
+async function cerrarSesionSola(motivo) {
+  try { localStorage.removeItem(ACTIVIDAD); } catch { /* ya está */ }
+  await sb.auth.signOut();
+  yo = null;
+  mostrar("entrar");
+  const aviso = $("aviso-entrar");
+  aviso.textContent = motivo === "dia"
+    ? "Se cerró la sesión porque empezó un día nuevo. Entrá con tu contraseña."
+    : `Se cerró la sesión sola después de ${MINUTOS_SIN_USAR} minutos sin usarla. `
+      + "Entrá con tu contraseña.";
+  aviso.hidden = false;
+}
+
+async function revisarSesion() {
+  if (!yo) return;
+  const motivo = motivoDeCierre();
+  if (motivo) await cerrarSesionSola(motivo);
+}
+
+// Cada minuto, y además al volver a la app, que es cuando más importa.
+setInterval(revisarSesion, 60000);
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) revisarSesion();
+});
+for (const evento of ["click", "keydown", "touchstart"]) {
+  document.addEventListener(evento, marcarActividad, { passive: true });
+}
+
 // ---------------------------------------------------------------- entrar
 
 async function arrancar() {
   const { data } = await sb.auth.getSession();
-  if (data.session) await entrarConSesion();
-  else mostrar("entrar");
+  if (!data.session) { mostrar("entrar"); return; }
+  const motivo = motivoDeCierre();
+  if (motivo) { await cerrarSesionSola(motivo); return; }
+  await entrarConSesion();
 }
 
 function mostrar(pantalla) {
@@ -368,6 +428,8 @@ $("form-entrar").addEventListener("submit", async (e) => {
     return;
   }
   $("contrasena").value = "";
+  ultimoRegistro = 0;
+  marcarActividad();
   await entrarConSesion();
 });
 
@@ -441,6 +503,7 @@ $("form-autorizar").addEventListener("submit", async (e) => {
 
 async function salir() {
   if (!confirm("¿Salir? Para volver a entrar vas a necesitar tu usuario y contraseña.")) return;
+  try { localStorage.removeItem(ACTIVIDAD); } catch { /* ya está */ }
   await sb.auth.signOut();
   yo = null;
   mostrar("entrar");
