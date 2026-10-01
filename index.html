@@ -450,11 +450,12 @@ $("salir-autorizar").addEventListener("click", salir);
 
 // ---------------------------------------------------------------- clientes
 
+// La lista va con la llave del celular, igual que los cobros: un celular
+// desautorizado no ve ni siquiera a los clientes.
 async function cargarClientes() {
-  const { data, error } = await sb.from("clientes")
-    .select("id,codigo,nombre").eq("activo", true).order("nombre");
+  const { data, error } = await sb.rpc("clientes_para", { p_llave: llaveGuardada() });
   if (error) { avisar("No se pudo traer la lista de clientes. Revisá la señal.", "error"); return; }
-  clientes = data;
+  clientes = data || [];
 }
 
 function sinAcentos(t) {
