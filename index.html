@@ -163,6 +163,29 @@
   .resumen { display: grid; grid-template-columns: 1fr auto; gap: 4px 12px; margin-bottom: 8px; }
   .resumen .fuerte { font-weight: 700; }
   .vacio { color: var(--suave); }
+  .ppp h2 { margin: 0 0 8px; font-size: 15px; color: var(--suave); font-weight: 600; }
+  .ppp-rojo {
+    display: flex; justify-content: space-between; align-items: center; gap: 10px;
+    background: var(--error-fondo); border-radius: 10px; padding: 10px 12px; margin-bottom: 8px;
+  }
+  .ppp-rojo .nombre { color: var(--error); font-size: 14px; }
+  .ppp-rojo .falta { color: var(--error); font-size: 13px; }
+  .ppp-rojo .valor { color: var(--error); font-size: 24px; font-weight: 700; white-space: nowrap; }
+  .pastillas { display: flex; flex-wrap: wrap; gap: 6px; }
+  .pastillas span {
+    background: var(--ok-fondo); color: var(--ok); font-size: 13px;
+    padding: 4px 10px; border-radius: 999px; white-space: nowrap;
+  }
+  .renglon { border-top: 1px solid var(--borde); padding: 10px 0; }
+  .renglon:first-child { border-top: 0; }
+  .renglon .fila { display: grid; grid-template-columns: 1fr 1fr 44px; gap: 6px; align-items: center; }
+  .renglon select { width: 100%; margin: 0 0 6px; }
+  .renglon input { margin: 0; }
+  .renglon .quitar { padding: 8px 0; }
+  .alarma { color: var(--error); font-size: 13px; margin-top: 4px; }
+  .venta { display: flex; justify-content: space-between; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--borde); }
+  .venta:last-child { border-bottom: 0; }
+  .venta .detalle { color: var(--suave); font-size: 14px; }
 
   dialog {
     border: 0; border-radius: 16px; padding: 20px;
@@ -214,7 +237,10 @@
         <h1>Cargar cobro</h1>
         <div class="quien" id="quien"></div>
       </div>
-      <button class="secundario chico" id="salir">Salir</button>
+      <div>
+        <button class="secundario chico" id="ir-a-ventas" hidden>Ventas</button>
+        <button class="secundario chico" id="salir">Salir</button>
+      </div>
     </header>
 
     <div id="aviso" class="aviso" hidden></div>
@@ -260,6 +286,63 @@
       <div id="lista-hoy"></div>
     </section>
   </section>
+
+  <section id="pantalla-ventas" hidden>
+    <header>
+      <div>
+        <h1>Cargar venta</h1>
+        <div class="quien" id="quien-ventas"></div>
+      </div>
+      <div>
+        <button class="secundario chico" id="ir-a-cobros" hidden>Cobros</button>
+        <button class="secundario chico" id="salir-ventas">Salir</button>
+      </div>
+    </header>
+
+    <div id="aviso-venta" class="aviso" hidden></div>
+
+    <section class="tarjeta ppp" id="panel-ppp" hidden>
+      <h2>PPP del día si cerrás esta venta</h2>
+      <div id="ppp-rojos"></div>
+      <div class="pastillas" id="ppp-verdes"></div>
+    </section>
+
+    <form id="form-venta" class="tarjeta" novalidate>
+      <label for="buscar-venta">Cliente</label>
+      <div id="cliente-venta-elegido" class="elegido" hidden>
+        <span id="cliente-venta-nombre"></span>
+        <button type="button" class="secundario chico" id="cambiar-cliente-venta">Cambiar</button>
+      </div>
+      <div id="elegir-cliente-venta">
+        <input id="buscar-venta" placeholder="Escribí el nombre o el código" autocomplete="off">
+        <ul class="resultados" id="resultados-venta"></ul>
+      </div>
+
+      <label>Productos</label>
+      <div id="renglones"></div>
+      <p><button type="button" class="secundario" id="agregar-renglon">Agregar producto</button></p>
+
+      <label for="observaciones-venta">Observaciones (opcional)</label>
+      <textarea id="observaciones-venta"></textarea>
+
+      <div class="total"><span>Total</span><span id="total-venta">$ 0</span></div>
+      <button class="principal" id="guardar-venta">Cerrar venta</button>
+    </form>
+
+    <section class="tarjeta">
+      <h2>Mis ventas de hoy</h2>
+      <div id="lista-ventas"></div>
+    </section>
+  </section>
+
+  <dialog id="confirmar-venta">
+    <h2>¿Cerrás la venta?</h2>
+    <div id="confirmar-venta-detalle"></div>
+    <p>
+      <button type="button" class="secundario" id="confirmar-venta-no">Volver</button>
+      <button type="button" class="principal" id="confirmar-venta-si">Cerrar venta</button>
+    </p>
+  </dialog>
 
   <dialog id="confirmar">
     <h2>¿Guardar este cobro?</h2>
@@ -391,6 +474,7 @@ function mostrar(pantalla) {
   $("pantalla-entrar").hidden = pantalla !== "entrar";
   $("pantalla-autorizar").hidden = pantalla !== "autorizar";
   $("pantalla-cobros").hidden = pantalla !== "cobros";
+  $("pantalla-ventas").hidden = pantalla !== "ventas";
 }
 
 // La llave de este celular. Queda guardada en el navegador: si se borran
@@ -473,8 +557,23 @@ async function revisarCelular() {
     return;
   }
   $("quien").textContent = `${yo.nombre} · ${nombreCelular}`;
-  mostrar("cobros");
-  await Promise.all([cargarClientes(), cargarCobrosDeHoy()]);
+  $("quien-ventas").textContent = `${yo.nombre} · ${nombreCelular}`;
+
+  // Cada uno entra a lo suyo. Quien hace las dos cosas tiene un botón
+  // arriba para pasar de una pantalla a la otra.
+  const vende = yo.puede_vender === true;
+  const cobra = yo.puede_cobrar !== false;
+  $("ir-a-ventas").hidden = !(vende && cobra);
+  $("ir-a-cobros").hidden = !(vende && cobra);
+  mostrar(vende && !cobra ? "ventas" : "cobros");
+
+  await cargarClientes();
+  if (cobra) await cargarCobrosDeHoy();
+  if (vende) {
+    await Promise.all([cargarProductos(), cargarPppDeHoy()]);
+    limpiarVenta();
+    cargarVentasDeHoy();
+  }
 }
 
 $("form-autorizar").addEventListener("submit", async (e) => {
@@ -774,6 +873,369 @@ async function cargarCobrosDeHoy() {
     resumen.append(a, b);
   }
 }
+
+// ----------------------------------------------------------------- ventas
+// El vendedor carga el pedido y ve, mientras lo arma, cómo le queda el PPP
+// del día de cada producto que la oficina marcó para seguir. Lo que mira es
+// lo suyo: no cuenta las ventas que se cargan en la computadora.
+
+let productos = [];
+let pppHoy = {};            // producto_id -> {cajas, total} de lo que vendió hoy
+let clienteVenta = null;
+let renglones = [];         // [{producto, cajas, precio, fila, alarma}]
+let idDeLaVenta = null;
+
+function avisarVenta(texto, tipo) {
+  const aviso = $("aviso-venta");
+  aviso.textContent = texto;
+  aviso.className = "aviso " + tipo;
+  aviso.hidden = false;
+  aviso.scrollIntoView({ behavior: "smooth", block: "center" });
+  if (tipo === "ok") setTimeout(() => { aviso.hidden = true; }, 5000);
+}
+
+async function cargarProductos() {
+  const { data, error } = await sb.rpc("productos_para", { p_llave: llaveGuardada() });
+  if (error) {
+    avisarVenta("No se pudo traer la lista de productos. Revisá la señal.", "error");
+    return;
+  }
+  productos = (data || []).map((p) => ({
+    ...p,
+    precio_venta: Number(p.precio_venta),
+    ppp_minimo: Number(p.ppp_minimo),
+  }));
+}
+
+async function cargarPppDeHoy() {
+  const { data, error } = await sb.rpc("ppp_del_dia", { p_llave: llaveGuardada() });
+  if (error) return;
+  pppHoy = {};
+  for (const fila of data || []) {
+    pppHoy[fila.producto_id] = {
+      cajas: Number(fila.cajas),
+      total: Number(fila.total),
+    };
+  }
+}
+
+function agregarRenglon() {
+  if (!productos.length) {
+    avisarVenta("Todavía no hay productos cargados.", "error");
+    return;
+  }
+  const renglon = { producto: null, cajas: 0, precio: 0 };
+
+  const caja = document.createElement("div");
+  caja.className = "renglon";
+  const fila = document.createElement("div");
+  fila.className = "fila";
+
+  const elegir = document.createElement("select");
+  const vacio = document.createElement("option");
+  vacio.value = "";
+  vacio.textContent = "Elegí el producto";
+  elegir.append(vacio);
+  for (const producto of productos) {
+    const opcion = document.createElement("option");
+    opcion.value = producto.id;
+    opcion.textContent = producto.nombre;
+    elegir.append(opcion);
+  }
+
+  const cajas = document.createElement("input");
+  cajas.inputMode = "numeric";
+  cajas.placeholder = "cajas";
+
+  const precio = document.createElement("input");
+  precio.inputMode = "decimal";
+  precio.placeholder = "precio";
+
+  const quitar = document.createElement("button");
+  quitar.type = "button";
+  quitar.className = "secundario chico quitar";
+  quitar.textContent = "✕";
+  quitar.setAttribute("aria-label", "Quitar este producto");
+
+  const alarma = document.createElement("div");
+  alarma.className = "alarma";
+  alarma.hidden = true;
+
+  elegir.addEventListener("change", () => {
+    renglon.producto = productos.find((p) => String(p.id) === elegir.value) || null;
+    // El precio de lista como punto de partida: casi siempre vende a ese.
+    if (renglon.producto && !precio.value && renglon.producto.precio_venta) {
+      precio.value = renglon.producto.precio_venta;
+      renglon.precio = renglon.producto.precio_venta;
+    }
+    recalcularVenta();
+  });
+  cajas.addEventListener("input", () => {
+    renglon.cajas = Math.max(0, Math.round(leerMonto(cajas.value)));
+    recalcularVenta();
+  });
+  precio.addEventListener("input", () => {
+    renglon.precio = leerMonto(precio.value);
+    recalcularVenta();
+  });
+  quitar.addEventListener("click", () => {
+    renglones = renglones.filter((r) => r !== renglon);
+    caja.remove();
+    recalcularVenta();
+  });
+
+  fila.append(cajas, precio, quitar);
+  caja.append(elegir, fila, alarma);
+  $("renglones").append(caja);
+
+  renglon.alarma = alarma;
+  renglon.campoPrecio = precio;
+  renglones.push(renglon);
+}
+
+function recalcularVenta() {
+  let total = 0;
+  for (const renglon of renglones) {
+    total += renglon.cajas * renglon.precio;
+    const minimo = renglon.producto ? renglon.producto.ppp_minimo : 0;
+    const flojo = minimo && renglon.precio && renglon.precio < minimo;
+    renglon.alarma.hidden = !flojo;
+    renglon.alarma.textContent = flojo ? `Mínimo ${plata(minimo)}` : "";
+    renglon.campoPrecio.style.color = flojo ? "var(--error)" : "";
+  }
+  $("total-venta").textContent = plata(total);
+  mostrarPpp();
+}
+
+// Junta lo que ya vendió hoy con lo que está cargando y arma el PPP de cada
+// producto que la oficina marcó. Los que están por debajo del mínimo van
+// grandes y arriba; los que van bien, en una pastilla.
+function mostrarPpp() {
+  const acumulado = {};
+  for (const [id, valores] of Object.entries(pppHoy)) {
+    acumulado[id] = { cajas: valores.cajas, total: valores.total };
+  }
+  for (const renglon of renglones) {
+    if (!renglon.producto || !renglon.cajas) continue;
+    const id = renglon.producto.id;
+    acumulado[id] = acumulado[id] || { cajas: 0, total: 0 };
+    acumulado[id].cajas += renglon.cajas;
+    acumulado[id].total += renglon.cajas * renglon.precio;
+  }
+
+  const rojos = $("ppp-rojos");
+  const verdes = $("ppp-verdes");
+  rojos.innerHTML = "";
+  verdes.innerHTML = "";
+  let hay = false;
+
+  for (const producto of productos) {
+    if (!producto.seguir_ppp) continue;
+    const movido = acumulado[producto.id];
+    if (!movido || !movido.cajas) continue;
+    hay = true;
+    const ppp = movido.total / movido.cajas;
+    const minimo = producto.ppp_minimo;
+
+    if (minimo && ppp < minimo) {
+      const caja = document.createElement("div");
+      caja.className = "ppp-rojo";
+      const textos = document.createElement("div");
+      const nombre = document.createElement("div");
+      nombre.className = "nombre";
+      nombre.textContent = producto.nombre;
+      const falta = document.createElement("div");
+      falta.className = "falta";
+      falta.textContent = `mínimo ${plata(minimo)} · te faltan ${plata(minimo - ppp)}`;
+      textos.append(nombre, falta);
+      const valor = document.createElement("div");
+      valor.className = "valor";
+      valor.textContent = plata(ppp);
+      caja.append(textos, valor);
+      rojos.append(caja);
+    } else {
+      const pastilla = document.createElement("span");
+      pastilla.textContent = `${producto.nombre}: ${plata(ppp)}`;
+      verdes.append(pastilla);
+    }
+  }
+  $("panel-ppp").hidden = !hay;
+}
+
+$("agregar-renglon").addEventListener("click", agregarRenglon);
+
+$("buscar-venta").addEventListener("input", () => {
+  const busqueda = sinAcentos($("buscar-venta").value.trim());
+  const lista = $("resultados-venta");
+  lista.innerHTML = "";
+  if (!busqueda) return;
+  const encontrados = clientes.filter((c) =>
+    sinAcentos(c.nombre).includes(busqueda) || sinAcentos(c.codigo || "") === busqueda
+  ).slice(0, 8);
+  for (const cliente of encontrados) {
+    const item = document.createElement("li");
+    const boton = document.createElement("button");
+    boton.type = "button";
+    boton.textContent = cliente.nombre;
+    if (cliente.codigo) {
+      const codigo = document.createElement("span");
+      codigo.className = "codigo";
+      codigo.textContent = cliente.codigo;
+      boton.append(codigo);
+    }
+    boton.addEventListener("click", () => elegirClienteVenta(cliente));
+    item.append(boton);
+    lista.append(item);
+  }
+});
+
+function elegirClienteVenta(cliente) {
+  clienteVenta = cliente;
+  $("cliente-venta-nombre").textContent = cliente.nombre;
+  $("cliente-venta-elegido").hidden = false;
+  $("elegir-cliente-venta").hidden = true;
+  $("resultados-venta").innerHTML = "";
+  $("buscar-venta").value = "";
+}
+
+$("cambiar-cliente-venta").addEventListener("click", () => {
+  clienteVenta = null;
+  $("cliente-venta-elegido").hidden = true;
+  $("elegir-cliente-venta").hidden = false;
+});
+
+$("form-venta").addEventListener("submit", (e) => {
+  e.preventDefault();
+  $("aviso-venta").hidden = true;
+  if (!clienteVenta) return avisarVenta("Elegí el cliente.", "error");
+
+  const cargados = renglones.filter((r) => r.producto && r.cajas > 0 && r.precio > 0);
+  if (!cargados.length) return avisarVenta("Cargá al menos un producto con cajas y precio.", "error");
+
+  const detalle = $("confirmar-venta-detalle");
+  detalle.innerHTML = "";
+  const nombre = document.createElement("p");
+  nombre.innerHTML = "<strong></strong>";
+  nombre.firstChild.textContent = clienteVenta.nombre;
+  detalle.append(nombre);
+  let total = 0;
+  for (const renglon of cargados) {
+    total += renglon.cajas * renglon.precio;
+    const linea = document.createElement("div");
+    linea.textContent = `${renglon.cajas} × ${renglon.producto.nombre} a ${plata(renglon.precio)}`;
+    detalle.append(linea);
+  }
+  const abajo = document.createElement("p");
+  abajo.innerHTML = "<strong></strong>";
+  abajo.firstChild.textContent = "Total: " + plata(total);
+  detalle.append(abajo);
+  $("confirmar-venta").showModal();
+});
+
+$("confirmar-venta-no").addEventListener("click", () => $("confirmar-venta").close());
+$("confirmar-venta-si").addEventListener("click", async () => {
+  $("confirmar-venta").close();
+  await guardarVenta();
+});
+
+async function guardarVenta() {
+  const boton = $("guardar-venta");
+  boton.disabled = true;
+  boton.textContent = "Guardando…";
+  // El mismo número en cada reintento: si el primero llegó pero se cortó la
+  // señal antes de la respuesta, el segundo no duplica la venta.
+  idDeLaVenta = idDeLaVenta || crypto.randomUUID();
+  try {
+    const cargados = renglones.filter((r) => r.producto && r.cajas > 0 && r.precio > 0);
+    const { error } = await sb.rpc("cargar_venta", {
+      p_llave: llaveGuardada(),
+      p_id: idDeLaVenta,
+      p_cliente: clienteVenta.id,
+      p_renglones: cargados.map((r) => ({
+        producto_id: r.producto.id,
+        cajas: r.cajas,
+        precio: r.precio,
+      })),
+      p_observaciones: $("observaciones-venta").value.trim(),
+    });
+    if (error && String(error.message).includes("celular_no_autorizado")) {
+      await revisarCelular();
+      $("aviso-autorizar").textContent =
+        "Este celular dejó de estar autorizado. La última venta NO se guardó.";
+      $("aviso-autorizar").hidden = false;
+      return;
+    }
+    if (error) throw error;
+
+    const total = cargados.reduce((suma, r) => suma + r.cajas * r.precio, 0);
+    avisarVenta(`Venta cerrada: ${clienteVenta.nombre}, ${plata(total)}.`, "ok");
+    limpiarVenta();
+    await cargarPppDeHoy();
+    mostrarPpp();
+    cargarVentasDeHoy();
+  } catch (error) {
+    avisarVenta(explicarError(error), "error");
+  } finally {
+    boton.disabled = false;
+    boton.textContent = "Cerrar venta";
+  }
+}
+
+function limpiarVenta() {
+  idDeLaVenta = null;
+  clienteVenta = null;
+  renglones = [];
+  $("renglones").innerHTML = "";
+  $("cliente-venta-elegido").hidden = true;
+  $("elegir-cliente-venta").hidden = false;
+  $("observaciones-venta").value = "";
+  $("total-venta").textContent = plata(0);
+  agregarRenglon();
+}
+
+async function cargarVentasDeHoy() {
+  const { data, error } = await sb
+    .from("ventas")
+    .select("*")
+    .eq("fecha", hoyEnArgentina())
+    .order("creado_en", { ascending: false });
+  const lista = $("lista-ventas");
+  lista.innerHTML = "";
+  if (error) return;
+  if (!data.length) {
+    const vacio = document.createElement("p");
+    vacio.className = "vacio";
+    vacio.textContent = "Todavía no cargaste ventas hoy.";
+    lista.append(vacio);
+    return;
+  }
+  for (const venta of data) {
+    const cliente = clientes.find((c) => c.id === venta.cliente_id);
+    const cajas = (venta.renglones || []).reduce((s, r) => s + Number(r.cajas), 0);
+    const total = (venta.renglones || []).reduce(
+      (s, r) => s + Number(r.cajas) * Number(r.precio), 0
+    );
+    const caja = document.createElement("div");
+    caja.className = "venta";
+    const textos = document.createElement("div");
+    const nombre = document.createElement("div");
+    nombre.textContent = cliente ? cliente.nombre : "Cliente";
+    const detalle = document.createElement("div");
+    detalle.className = "detalle";
+    detalle.textContent = `${cajas} cajas`;
+    textos.append(nombre, detalle);
+    const monto = document.createElement("div");
+    monto.className = "monto";
+    monto.textContent = plata(total);
+    caja.append(textos, monto);
+    lista.append(caja);
+  }
+}
+
+$("salir-ventas").addEventListener("click", salir);
+$("ir-a-cobros").addEventListener("click", () => mostrar("cobros"));
+$("ir-a-ventas").addEventListener("click", () => mostrar("ventas"));
+
 
 arrancar();
 </script>
