@@ -186,6 +186,8 @@
   .venta { display: flex; justify-content: space-between; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--borde); }
   .venta:last-child { border-bottom: 0; }
   .venta .detalle { color: var(--suave); font-size: 14px; }
+  .en-oficina { color: var(--suave); font-size: 12px; white-space: nowrap; }
+  .cobro .acciones, .venta .acciones { display: flex; align-items: center; gap: 8px; }
 
   dialog {
     border: 0; border-radius: 16px; padding: 20px;
@@ -826,7 +828,7 @@ function limpiar() {
 
 async function cargarCobrosDeHoy() {
   const { data, error } = await sb.from("cobros")
-    .select("id,creado_en,cliente_id,efectivo,transferencia,cheque,foto")
+    .select("id,creado_en,cliente_id,efectivo,transferencia,cheque,foto,importado")
     .eq("fecha", hoyEnArgentina())
     .order("creado_en", { ascending: false });
   const lista = $("lista-hoy");
@@ -855,7 +857,18 @@ async function cargarCobrosDeHoy() {
     const monto = document.createElement("div");
     monto.className = "monto";
     monto.textContent = plata(Number(c.efectivo) + Number(c.transferencia) + Number(c.cheque));
-    fila.append(izq, monto);
+    const acciones = document.createElement("div");
+    acciones.className = "acciones";
+    acciones.append(monto);
+    acciones.append(
+      c.importado
+        ? marcaEnLaOficina()
+        : botonBorrar(() => borrarDelCelular(
+            "cobro", c.id,
+            `el cobro de ${plata(Number(c.efectivo) + Number(c.transferencia) + Number(c.cheque))}`,
+            avisar, cargarCobrosDeHoy))
+    );
+    fila.append(izq, acciones);
     lista.append(fila);
   }
   const lineas = [
@@ -1227,7 +1240,17 @@ async function cargarVentasDeHoy() {
     const monto = document.createElement("div");
     monto.className = "monto";
     monto.textContent = plata(total);
-    caja.append(textos, monto);
+    const acciones = document.createElement("div");
+    acciones.className = "acciones";
+    acciones.append(monto);
+    acciones.append(
+      venta.importado
+        ? marcaEnLaOficina()
+        : botonBorrar(() => borrarDelCelular(
+            "venta", venta.id, `la venta de ${plata(total)}`,
+            avisarVenta, cargarVentasDeHoy))
+    );
+    caja.append(textos, acciones);
     lista.append(caja);
   }
 }
@@ -1236,6 +1259,41 @@ $("salir-ventas").addEventListener("click", salir);
 $("ir-a-cobros").addEventListener("click", () => mostrar("cobros"));
 $("ir-a-ventas").addEventListener("click", () => mostrar("ventas"));
 
+
+// Borrar lo cargado por error. La computadora se lleva los cobros y las
+// ventas cada dos minutos: hasta entonces se pueden sacar desde acá, después
+// ya están en la cuenta del cliente y los saca la oficina.
+async function borrarDelCelular(que, id, descripcion, avisarCon, recargar) {
+  if (!confirm(`¿Borrar ${descripcion}?`)) return;
+  const { data, error } = await sb.rpc(que === "venta" ? "borrar_venta" : "borrar_cobro", {
+    p_llave: llaveGuardada(),
+    p_id: id,
+  });
+  if (error) { avisarCon(explicarError(error), "error"); return; }
+  if (!data) {
+    avisarCon("Ya se lo llevó la oficina: pedile que lo anule desde la computadora.", "error");
+  } else {
+    avisarCon(`Se borró ${descripcion}.`, "ok");
+  }
+  recargar();
+}
+
+function botonBorrar(alTocar) {
+  const boton = document.createElement("button");
+  boton.type = "button";
+  boton.className = "secundario chico";
+  boton.textContent = "✕";
+  boton.setAttribute("aria-label", "Borrar");
+  boton.addEventListener("click", alTocar);
+  return boton;
+}
+
+function marcaEnLaOficina() {
+  const marca = document.createElement("span");
+  marca.className = "en-oficina";
+  marca.textContent = "en la oficina";
+  return marca;
+}
 
 arrancar();
 </script>
