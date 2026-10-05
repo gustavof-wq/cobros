@@ -183,6 +183,7 @@
   .renglon input { margin: 0; }
   .renglon .quitar { padding: 8px 0; }
   .alarma { color: var(--error); font-size: 13px; margin-top: 4px; }
+  .alarma.aviso { color: var(--suave); }
   .venta { display: flex; justify-content: space-between; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--borde); }
   .venta:last-child { border-bottom: 0; }
   .venta .detalle { color: var(--suave); font-size: 14px; }
@@ -976,11 +977,12 @@ function agregarRenglon() {
 
   elegir.addEventListener("change", () => {
     renglon.producto = productos.find((p) => String(p.id) === elegir.value) || null;
-    // El precio de lista como punto de partida: casi siempre vende a ese.
-    if (renglon.producto && !precio.value && renglon.producto.precio_venta) {
-      precio.value = renglon.producto.precio_venta;
-      renglon.precio = renglon.producto.precio_venta;
-    }
+    // El precio de lista como punto de partida: casi siempre vende a ese. Va de
+    // nuevo cada vez que cambia el producto, porque el precio que había era del
+    // producto anterior y no sirve para este.
+    const lista = renglon.producto ? renglon.producto.precio_venta : 0;
+    precio.value = lista ? lista : "";
+    renglon.precio = lista;
     recalcularVenta();
   });
   cajas.addEventListener("input", () => {
@@ -1012,8 +1014,16 @@ function recalcularVenta() {
     total += renglon.cajas * renglon.precio;
     const minimo = renglon.producto ? renglon.producto.ppp_minimo : 0;
     const flojo = minimo && renglon.precio && renglon.precio < minimo;
-    renglon.alarma.hidden = !flojo;
-    renglon.alarma.textContent = flojo ? `Mínimo ${plata(minimo)}` : "";
+    // Si la oficina todavía no le puso precio al producto, el casillero queda
+    // vacío: conviene decirlo y no dejar al vendedor esperando.
+    const sinLista = Boolean(renglon.producto) && !renglon.producto.precio_venta && !renglon.precio;
+    renglon.alarma.hidden = !flojo && !sinLista;
+    renglon.alarma.textContent = flojo
+      ? `Mínimo ${plata(minimo)}`
+      : sinLista
+        ? "Sin precio en el sistema: ponelo a mano"
+        : "";
+    renglon.alarma.classList.toggle("aviso", !flojo && sinLista);
     renglon.campoPrecio.style.color = flojo ? "var(--error)" : "";
   }
   $("total-venta").textContent = plata(total);
@@ -1046,8 +1056,10 @@ function mostrarPpp() {
     if (!producto.seguir_ppp) continue;
     const movido = acumulado[producto.id];
     if (!movido || !movido.cajas) continue;
-    hay = true;
     const ppp = movido.total / movido.cajas;
+    // Mientras no haya precio no hay PPP para mirar: no lo mostramos en verde.
+    if (!ppp) continue;
+    hay = true;
     const minimo = producto.ppp_minimo;
 
     if (minimo && ppp < minimo) {
