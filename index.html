@@ -183,6 +183,7 @@
   .renglon input { margin: 0; }
   .renglon .quitar { padding: 8px 0; }
   .alarma { color: var(--error); font-size: 13px; margin-top: 4px; }
+  .historia { color: var(--suave); font-size: 13px; margin-top: 4px; }
   .alarma.aviso { color: var(--suave); }
   .venta { display: flex; justify-content: space-between; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--borde); }
   .venta:last-child { border-bottom: 0; }
@@ -896,6 +897,7 @@ async function cargarCobrosDeHoy() {
 let productos = [];
 let pppHoy = {};            // producto_id -> {cajas, total} de lo que vendió hoy
 let clienteVenta = null;
+let ultimosPrecios = {};   // producto_id -> {precio, fecha} para este cliente
 let renglones = [];         // [{producto, cajas, precio, fila, alarma}]
 let idDeLaVenta = null;
 
@@ -919,6 +921,35 @@ async function cargarProductos() {
     precio_venta: Number(p.precio_venta),
     ppp_minimo: Number(p.ppp_minimo),
   }));
+}
+
+// A cuánto le vendimos cada producto a este cliente la última vez. Lo
+// calcula la computadora y lo sube con cada sincronización. Si todavía no
+// está en la nube, la venta se carga igual: es una ayuda, no un requisito.
+async function cargarUltimosPrecios() {
+  ultimosPrecios = {};
+  if (clienteVenta) {
+    const { data, error } = await sb.rpc("precios_del_cliente", {
+      p_llave: llaveGuardada(),
+      p_cliente: clienteVenta.id,
+    });
+    if (!error) {
+      for (const fila of data || []) {
+        ultimosPrecios[fila.producto_id] = {
+          precio: Number(fila.precio),
+          fecha: fila.fecha,
+        };
+      }
+    }
+  }
+  recalcularVenta();
+}
+
+// «2/10», y con el año cuando es de otro año, para que no parezca de ayer.
+function diaYMes(iso) {
+  const [anio, mes, dia] = String(iso).split("-");
+  if (anio === hoyEnArgentina().slice(0, 4)) return `${Number(dia)}/${Number(mes)}`;
+  return `${Number(dia)}/${Number(mes)}/${anio.slice(2)}`;
 }
 
 async function cargarPppDeHoy() {
@@ -975,6 +1006,10 @@ function agregarRenglon() {
   alarma.className = "alarma";
   alarma.hidden = true;
 
+  const historia = document.createElement("div");
+  historia.className = "historia";
+  historia.hidden = true;
+
   elegir.addEventListener("change", () => {
     renglon.producto = productos.find((p) => String(p.id) === elegir.value) || null;
     // El precio de lista como punto de partida: casi siempre vende a ese. Va de
@@ -1000,10 +1035,11 @@ function agregarRenglon() {
   });
 
   fila.append(cajas, precio, quitar);
-  caja.append(elegir, fila, alarma);
+  caja.append(elegir, fila, alarma, historia);
   $("renglones").append(caja);
 
   renglon.alarma = alarma;
+  renglon.historia = historia;
   renglon.campoPrecio = precio;
   renglones.push(renglon);
 }
@@ -1025,6 +1061,13 @@ function recalcularVenta() {
         : "";
     renglon.alarma.classList.toggle("aviso", !flojo && sinLista);
     renglon.campoPrecio.style.color = flojo ? "var(--error)" : "";
+
+    // A cuánto le vendimos este producto a este cliente la vez pasada.
+    const ultimo = renglon.producto ? ultimosPrecios[renglon.producto.id] : null;
+    renglon.historia.hidden = !ultimo;
+    renglon.historia.textContent = ultimo
+      ? `La última vez: ${plata(ultimo.precio)} · ${diaYMes(ultimo.fecha)}`
+      : "";
   }
   $("total-venta").textContent = plata(total);
   mostrarPpp();
@@ -1116,6 +1159,7 @@ $("buscar-venta").addEventListener("input", () => {
 
 function elegirClienteVenta(cliente) {
   clienteVenta = cliente;
+  cargarUltimosPrecios();
   $("cliente-venta-nombre").textContent = cliente.nombre;
   $("cliente-venta-elegido").hidden = false;
   $("elegir-cliente-venta").hidden = true;
@@ -1125,6 +1169,7 @@ function elegirClienteVenta(cliente) {
 
 $("cambiar-cliente-venta").addEventListener("click", () => {
   clienteVenta = null;
+  cargarUltimosPrecios();
   $("cliente-venta-elegido").hidden = true;
   $("elegir-cliente-venta").hidden = false;
 });
@@ -1209,6 +1254,7 @@ async function guardarVenta() {
 function limpiarVenta() {
   idDeLaVenta = null;
   clienteVenta = null;
+  ultimosPrecios = {};
   renglones = [];
   $("renglones").innerHTML = "";
   $("cliente-venta-elegido").hidden = true;
